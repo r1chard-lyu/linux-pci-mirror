@@ -595,11 +595,22 @@ static struct irq_chip brcm_msi_bottom_irq_chip = {
 
 static int brcm_msi_alloc(struct brcm_msi *msi, unsigned int nr_irqs)
 {
+	/*
+	 * brcm_msi_compose_msi_msg() puts hwirq in the low order bits of the
+	 * message data, which a Multi-MSI endpoint rewrites per vector, so a
+	 * block's base must be aligned to the Multiple Message Enable count.
+	 */
+	unsigned long align_mask = roundup_pow_of_two(nr_irqs) - 1;
 	int hwirq;
 
 	mutex_lock(&msi->lock);
-	hwirq = bitmap_find_free_region(msi->used, msi->nr,
-					order_base_2(nr_irqs));
+	hwirq = bitmap_find_next_zero_area(msi->used, msi->nr, 0, nr_irqs,
+					   align_mask);
+	if (hwirq >= msi->nr) {
+		mutex_unlock(&msi->lock);
+		return -ENOSPC;
+	}
+	bitmap_set(msi->used, hwirq, nr_irqs);
 	mutex_unlock(&msi->lock);
 
 	return hwirq;
@@ -609,7 +620,7 @@ static void brcm_msi_free(struct brcm_msi *msi, unsigned long hwirq,
 			  unsigned int nr_irqs)
 {
 	mutex_lock(&msi->lock);
-	bitmap_release_region(msi->used, hwirq, order_base_2(nr_irqs));
+	bitmap_clear(msi->used, hwirq, nr_irqs);
 	mutex_unlock(&msi->lock);
 }
 
